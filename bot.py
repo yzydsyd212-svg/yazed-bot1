@@ -1,39 +1,68 @@
-import json, urllib.request, time, os, threading
+import os
+import time
+import json
+import threading
+import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_KEY = os.environ.get("GROQ_KEY")
 
-def send(chat_id, text):
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": chat_id, "text": text}
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data=json.dumps(data).encode(),
-        headers={"Content-Type": "application/json"}
-    )
-    urllib.request.urlopen(req)
+    try:
+        requests.post(url, json=data, timeout=10)
+    except:
+        pass
 
 def ask_groq(q):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     data = {
         "model": "llama-3.3-70b-versatile",
         "messages": [
-            {"role": "system", "content": "انت بوت اسمه يازد بوت. جاوب دايما بالعربي الفلسطيني العامي تبع غزة، بلهجة شبابية وودودة. ممنوع تجاوب بالانجليزي ابدا، حتى لو سألوك بالانجليزي جاوب بالعربي. خلي اجاباتك قصيرة وواضحة ومفهومة."},
+            {"role": "system", "content": "انت مساعد ذكي، جاوب بالعربي، خلي اجابتك قصيرة وواضحة ومفهومة."},
             {"role": "user", "content": q}
         ]
     }
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/chat/completions",
-        data=json.dumps(data).encode(),
-        headers={"Authorization": "Bearer " + GROQ_KEY, "Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req) as r:
-        res = json.loads(r.read())
-        return res["choices"][0]["message"]["content"]
+    try:
+        res = requests.post(url, headers=headers, json=data, timeout=30)
+        return res.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return "صار خطأ، جرب مرة تانية."
 
 def keep_alive():
-    class H(BaseHTTPRequestHandler):
+    class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200); self.end_headers(); self.wfile.write(b"Bot is alive")
-        def log_message(self, *a): pass
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is alive!")
+        def log_message(self, *args):
+            pass
     port = int(os.environ.get("PORT", 10000))
-    HTTP
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+keep_alive()
+
+offset = 0
+print("Bot started...")
+while True:
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        res = requests.get(url, params={"offset": offset, "timeout": 30}, timeout=35).json()
+        for update in res.get("result", []):
+            offset = update["update_id"] + 1
+            msg = update.get("message", {})
+            chat_id = msg.get("chat", {}).get("id")
+            text = msg.get("text", "")
+            if chat_id and text:
+                if text == "/start":
+                    send_message(chat_id, "اهلا! انا بوتك، ابعتلي اي سؤال.")
+                else:
+                    reply = ask_groq(text)
+                    send_message(chat_id, reply)
+    except Exception as e:
+        print("Error:", e)
+        time.sleep(3)
